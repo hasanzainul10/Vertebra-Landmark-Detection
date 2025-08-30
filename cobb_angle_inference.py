@@ -3,6 +3,8 @@ import numpy as np
 import cv2
 import os
 import argparse
+import signal
+import sys
 from models import spinal_net
 import decoder
 import cobb_evaluate
@@ -36,6 +38,25 @@ class CobbAngleCalculator:
         self.input_h = 1024
         self.input_w = 512
         self.down_ratio = 4
+        
+        # Set up signal handler for graceful shutdown
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+    
+    def signal_handler(self, signum, frame):
+        """Handle Ctrl+C and other termination signals"""
+        print("\n\nReceived termination signal. Cleaning up...")
+        self.cleanup()
+        sys.exit(0)
+    
+    def cleanup(self):
+        """Clean up OpenCV windows and resources"""
+        try:
+            cv2.destroyAllWindows()
+            cv2.waitKey(1)  # Ensure windows are closed
+            print("OpenCV windows closed.")
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
     
     def load_model(self, model_path):
         checkpoint = torch.load(model_path, map_location=lambda storage, loc: storage)
@@ -195,6 +216,20 @@ class CobbAngleCalculator:
         
         # Display image
         cv2.imshow('Cobb Angle Analysis', display_image)
+        
+        # Wait for key press with proper cleanup
+        print("\nPress 'q' to quit, 's' to save image, or any other key to continue...")
+        key = cv2.waitKey(0) & 0xFF
+        
+        if key == ord('q'):
+            print("Quitting...")
+            self.cleanup()
+            sys.exit(0)
+        elif key == ord('s'):
+            # Save the displayed image
+            save_path = f"cobb_analysis_saved_{cv2.getTickCount()}.jpg"
+            cv2.imwrite(save_path, display_image)
+            print(f"Image saved as: {save_path}")
         
         return result_image
     
@@ -997,10 +1032,6 @@ class CobbAngleCalculator:
             
             print(f"\nResults saved to {output_dir}/")
         
-        print("\nPress any key to close window...")
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        
         return landmarks, cobb_angles, result_image
 
 def main():
@@ -1025,10 +1056,11 @@ def main():
         return
     
     # Initialize calculator
-    calculator = CobbAngleCalculator(args.model_path, args.device)
-    
-    # Analyze image
+    calculator = None
     try:
+        calculator = CobbAngleCalculator(args.model_path, args.device)
+        
+        # Analyze image
         landmarks, cobb_angles, result_image = calculator.analyze_image(
             args.image_path, 
             save_output=not args.no_save,
@@ -1040,10 +1072,19 @@ def main():
         else:
             print("Analysis failed - no landmarks detected")
         
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user (Ctrl+C)")
+        if calculator:
+            calculator.cleanup()
     except Exception as e:
         print(f"Error during analysis: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        # Ensure cleanup happens
+        if calculator:
+            calculator.cleanup()
+        print("Script terminated.")
 
 if __name__ == "__main__":
     main() 
